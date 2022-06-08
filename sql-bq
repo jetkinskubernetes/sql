@@ -1,0 +1,232 @@
+SELECT
+distinct
+  bq5.Source as Source,
+  bq5.campagne as campagne ,
+  bq5.date_ as date_,
+  bq5.Agency as Agency,
+  bq5.adCost as adCost,
+  bq5.impressions as impressions,
+  bq5.adClicks as adClicks,
+  bq5.purhase AS purhase,
+  bq5.short_lid as short_lid  -- bq6.concact_data 
+FROM
+(SELECT
+  bq3.Source as Source,
+  bq3.campagne as campagne ,
+  bq3.date_ as date_,
+  bq3.Agency as Agency,
+  bq3.adCost as adCost,
+  bq3.impressions as impressions,
+  bq3.adClicks as adClicks,
+  bq3.purhase AS purhase,
+  bq4.lid as short_lid 
+FROM
+(SELECT
+  DISTINCT
+  'Yandex' as Source,
+  bq1.company_name AS campagne,
+  bq1.date_ AS date_,
+  bq1.Agency AS Agency,
+  bq2.city as city,
+  sum(bq1.adCost) AS adCost,
+  sum(bq1.impressions) AS impressions,
+  sum(bq1.adClicks) AS adClicks,
+  sum(bq2.purhase) AS purhase
+FROM (
+  SELECT
+    date_,
+    campaign,
+    company_name,
+    Agency,
+    sum(adClicks) AS adClicks,
+    sum(adCost) AS adCost,
+    sum(impressions) AS impressions,
+  FROM (
+    SELECT
+      date as date_,
+      utm.utm_campaign AS campaign,
+      REGEXP_EXTRACT(REPLACE(REGEXP_EXTRACT(utm.utm_campaign,'[name]{4}:.*'),'name:',""),'[a-zA-Z]+') AS company_name,
+      CASE
+        WHEN AdAccount = 'ingosstrah-2022'THEN 'i-com'
+        WHEN AdAccount = 'cvg-ingos-brand-rf-guest'THEN 'mgcom'
+      ELSE
+      AdAccount
+    END
+      AS Agency,
+      Cost AS adCost,
+      Impressions AS impressions,
+      Clicks AS adClicks
+    FROM
+      `owox-ingos.OWOX_AdCostData_Yandex.yandex_direct_AdCostData`
+    WHERE
+      CAST(DATE AS date) >= (CURRENT_DATE() - 160)
+      AND CAST(DATE AS date) <= (CURRENT_DATE())
+      AND utm.utm_source = 'yandex'
+      AND utm.utm_medium = 'cpc'
+      AND AdAccount IN ('ingosstrah-2022', 'cvg-ingos-brand-rf-guest'))     
+  GROUP BY
+    date_,
+    campaign,
+    company_name,
+    Agency
+ 
+  ) bq1
+LEFT JOIN (
+  SELECT
+    date AS date_,
+    trafficSource.campaign AS campaign,
+    count(h.eventInfo.eventAction) AS purhase,
+    geoNetwork.city AS city
+  FROM
+    `owox-ingos.OWOXBI_Streaming_GA.owoxbi_sessions_*` t,
+    UNNEST(hits) AS h
+  WHERE
+    CAST(DATE AS date) >= (CURRENT_DATE() - 160)
+    AND CAST(DATE AS date) <= (CURRENT_DATE())
+    AND h.eventInfo.eventAction = 'Переход на страницу оплаты' 
+    -- AND ((h.eventInfo.eventCategory = 'Выезд за границу' --
+    --     AND h.eventInfo.eventAction = 'Переход на страницу оплаты') --
+    --   OR (h.eventInfo.eventCategory = 'ДМС' --
+    --     AND h.eventInfo.eventAction = 'Переход на страницу оплаты') --
+    --   OR (h.eventInfo.eventCategory = 'Ипотека' --
+    --     AND h.eventInfo.eventAction = 'Переход на страницу оплаты') --
+    --   OR (h.eventInfo.eventCategory = 'Клещ' --
+    --     AND h.eventInfo.eventAction = 'Переход на страницу оплаты') --
+    --   OR (h.eventInfo.eventCategory = 'Несчастный случай' --
+    --     AND h.eventInfo.eventAction = 'Переход на страницу оплаты') --
+    --   AND (h.eventInfo.eventCategory = 'ОСАГО' --
+    --     AND h.eventInfo.eventAction = 'Переход на страницу оплаты') --
+    --   OR (h.eventInfo.eventCategory = 'Путешествие по России' --
+    --     AND h.eventInfo.eventAction = 'Переход на страницу оплаты') --
+    --   OR (h.eventInfo.eventCategory = 'Страхование квартиры' --
+    --     AND h.eventInfo.eventAction = 'Переход на страницу оплаты'))
+    AND trafficSource.source = 'yandex'
+    AND trafficSource.medium = 'cpc'
+group by 
+date,
+campaign,
+city
+  
+  ) bq2
+ON
+  bq1.date_= cast(bq2.date_ as date)
+  AND bq1.campaign = bq2.campaign
+GROUP BY
+  bq1.company_name,
+  bq1.Agency,
+  bq1.date_,
+  bq1.adCost,
+  bq1.impressions,
+  bq1.adClicks
+
+UNION ALL
+
+ SELECT
+  DISTINCT
+    'Google' as Source,
+    company_name AS company,
+     date as date_, 
+    '' AS Agency, 
+    round(sum(adCost),0) AS adCost,
+    sum(impressions) AS impressions,
+    sum(adClicks) AS adClicks,
+    0 as purhase
+
+  FROM (
+    SELECT
+      PARSE_DATE('%Y%m%d', _TABLE_SUFFIX) AS date,
+      campaign,
+      REGEXP_EXTRACT(REPLACE(REGEXP_EXTRACT(campaign,'[name]{4}:.*'),'name:',""),'[a-zA-Z]+') AS company_name,
+      adCost AS adCost,
+      Impressions AS impressions,
+      adClicks AS adClicks
+    FROM
+      `owox-ingos.OWOXBI_Streaming_GA.CostData_*`
+     WHERE
+     source = 'google'
+     AND medium = 'cpc'
+     AND _TABLE_SUFFIX >= '2022-01-01' 
+     AND REGEXP_EXTRACT(REPLACE(REGEXP_EXTRACT(campaign,'[name]{4}:.*'),'name:',""),'[a-zA-Z]+') in ('generic','osago','travel','antimite','kis','ns','dms','ifl','kasko')
+    )
+    GROUP BY
+    date,
+    company_name) bq3
+
+LEFT JOIN
+
+(SELECT
+    date AS date__,
+    trafficSource.source AS source,
+    trafficSource.medium AS medium,
+    h.eventInfo.eventCategory AS eventCategory,
+    trafficSource.campaign as campaign,
+    h.eventInfo.eventAction AS eventAction,
+    REGEXP_EXTRACT(REPLACE(REGEXP_EXTRACT(trafficSource.campaign,'[name]{4}:.*'),'name:',""),'[a-zA-Z]+') AS company_name,
+    count(h.eventInfo.eventAction) AS lid
+    -- COUNT(h.eventInfo.eventAction) OVER(PARTITION BY Date,trafficSource.source, trafficSource.medium,h.eventInfo.eventCategory,h.eventInfo.eventAction,
+
+  FROM
+    `owox-ingos.OWOXBI_Streaming_GA.owoxbi_sessions_*`,
+    UNNEST(hits) AS h
+  WHERE
+    CAST(DATE AS date) >= (CURRENT_DATE() - 160)
+    AND CAST(DATE AS date) <= (CURRENT_DATE())
+    AND h.eventInfo.eventAction LIKE 'Отправка з%'
+    AND trafficSource.source = 'yandex'
+    AND trafficSource.medium = 'cpc'
+    AND REGEXP_EXTRACT(REPLACE(REGEXP_EXTRACT(trafficSource.campaign,'[name]{4}:.*'),'name:',""),'[a-zA-Z]+') in ('generic','osago','travel','antimite','kis','ns','dms','ifl','kasko','agent')
+    group by 
+     date,
+    trafficSource.source,
+    trafficSource.medium,
+    REGEXP_EXTRACT(REPLACE(REGEXP_EXTRACT(trafficSource.campaign,'[name]{4}:.*'),'name:',""),'[a-zA-Z]+'),
+    h.eventInfo.eventCategory,
+    h.eventInfo.eventAction,
+    trafficSource.campaign) bq4
+
+    ON cast(bq3.date_ as date) = cast(bq4.date__ as date)
+    AND bq3.campagne = bq4.company_name) bq5
+
+-- LEFT JOIN
+
+--     (SELECT
+--     cast(PARSE_DATE('%d%m%%Y', date) as date) AS date__,
+--     trafficSource.source AS source,
+--     trafficSource.medium AS medium,
+--     h.eventInfo.eventCategory AS eventCategory,
+--     h.eventInfo.eventAction,
+--     REGEXP_EXTRACT(REPLACE(REGEXP_EXTRACT(trafficSource.campaign,'[name]{4}:.*'),'name:',""),'[a-zA-Z]+') AS company_name,
+--     count(h.eventInfo.eventAction) AS concact_data,
+--   FROM
+--     `owox-ingos.OWOXBI_Streaming_GA.owoxbi_sessions_*`,
+--     UNNEST(hits) AS h
+--   WHERE
+--      cast(PARSE_DATE('%d%m%%Y', date) as date) >= (CURRENT_DATE() - 160)
+--     AND  cast(PARSE_DATE('%d%m%%Y', date) as date) <= (CURRENT_DATE())
+--     AND ((h.eventInfo.eventCategory = 'КАСКО'
+--         AND h.eventInfo.eventAction = 'Ввод данных - контакты')
+--       OR (h.eventInfo.eventCategory = 'ОСАГО'
+--         AND h.eventInfo.eventAction = 'Заполнение данных о страхователе [2 этап]')
+--       OR (h.eventInfo.eventCategory = 'ОСАГО'
+--         AND h.eventInfo.eventAction = 'Предрасчет и акцепт условий страхования [6 этап]'))
+--     AND trafficSource.source = 'yandex'
+--     AND trafficSource.medium = 'cpc'
+--     AND REGEXP_EXTRACT(REPLACE(REGEXP_EXTRACT(trafficSource.campaign,'[name]{4}:.*'),'name:',""),'[a-zA-Z]+') in ('generic','osago','travel','antimite','kis','ns','dms','ifl','kasko')
+--     group by 
+--      date,
+--     trafficSource.source,
+--     trafficSource.medium,
+--     REGEXP_EXTRACT(REPLACE(REGEXP_EXTRACT(trafficSource.campaign,'[name]{4}:.*'),'name:',""),'[a-zA-Z]+'),
+--     h.eventInfo.eventCategory,
+--     h.eventInfo.eventAction) bq6
+
+-- ON cast(bq5.date_ as date) = cast(bq6.date__ as date)
+--     AND bq5.campagne = bq6.company_name
+
+
+
+
+
+
+
+
